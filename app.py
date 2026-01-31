@@ -59,6 +59,10 @@ def generate_hamiltonian_decomposition(original_letters: List[str], limit: int) 
     result = [">".join(cycle) for cycle in cycles]
     return result
 
+# 初始化 session_state
+if "refresh_counter" not in st.session_state:
+    st.session_state.refresh_counter = 0
+
 # Streamlit 应用配置
 st.set_page_config(
     page_title="序列生成器",
@@ -102,8 +106,11 @@ limit = st.sidebar.slider(
 )
 
 # 生成按钮
-if st.sidebar.button("🔄 刷新结果", type="primary", use_container_width=True):
-    st.rerun()
+if st.sidebar.button("🔄 刷新结果", type="primary", use_container_width=True, key="refresh_btn"):
+    st.session_state.refresh_counter += 1
+
+# 添加随机种子，确保每次刷新产生不同结果
+random.seed(st.session_state.refresh_counter + 42)
 
 # 显示当前参数
 st.sidebar.markdown("---")
@@ -144,15 +151,13 @@ with col2:
 
 # 统计信息
 st.markdown("---")
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("总序列数", len(result))
 with col2:
     st.metric("字符集类型", charset_value.upper())
 with col3:
     st.metric("限制数量", limit)
-with col4:
-    st.metric("平均长度", f"{len(result[0]) if result else 0}")
 
 # 页脚
 st.markdown("---")
