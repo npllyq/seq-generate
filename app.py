@@ -1,5 +1,6 @@
 import streamlit as st
 import random
+import pyperclip
 from typing import List
 
 # 数据定义
@@ -142,16 +143,18 @@ st.text_area(
     label_visibility="collapsed"
 )
 
-# 复制按钮（使用 Streamlit 的复制功能）
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    if st.button("📋 复制所有序列", type="secondary", use_container_width=True):
+# 复制按钮
+if st.button("📋 复制所有序列", type="secondary", use_container_width=True, key="copy_btn"):
+    try:
+        pyperclip.copy(result_text)
         st.toast("✅ 已复制到剪贴板！", icon="🎉")
+    except Exception as e:
+        st.toast(f"⚠️ 复制失败: {str(e)}", icon="⚠️")
         st.session_state.clipboard_text = result_text
 
 # 统计信息
 st.markdown("---")
-col1, col2, col3 = st.columns(3)
+col1, col2, col3 = st.columns([1, 1, 1])
 with col1:
     st.metric("总序列数", len(result))
 with col2:
