@@ -1,9 +1,10 @@
 import streamlit as st
 import random
 import pyperclip
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from enum import Enum
 import io
+import re
 
 
 # ==================== 配置与常量 ====================
@@ -11,22 +12,27 @@ class Charset(Enum):
     """字符集类型枚举"""
     CHAR = "字母 (A-Z)"
     NUMBER = "数字 (01-99)"
+    CUSTOM = "自定义字符集 ⚡"
 
 
-# 字符集定义
+# 预定义字符集
 CHAR_LETTER = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 ORIGINAL_LETTER = [f"{i:02d}" for i in range(1, 100)]
+
+# 预定义字符集大小限制
+MAX_LIMIT_CHAR = len(CHAR_LETTER)
+MAX_LIMIT_NUMBER = len(ORIGINAL_LETTER)
 
 # 算法参数
 RANDOM_SEED_BASE = 42
 MIN_LIMIT = 3
-MAX_LIMIT_CHAR = 26
-MAX_LIMIT_NUMBER = 99
+MIN_CUSTOM_CHARS = 3  # 自定义字符集最小字符数
+MAX_CUSTOM_CHARS = 200  # 自定义字符集最大字符数
 
 
 # ==================== 核心算法模块 ====================
 class SequenceGenerator:
-    """序列生成器 - 基于图论分解算法（内部实现，前端不暴露术语）"""
+    """序列生成器 - 基于图论分解算法"""
 
     def __init__(self, charset: List[str], seed: int = None):
         self.charset = charset
@@ -89,6 +95,60 @@ class SequenceGenerator:
         return cycles
 
 
+# ==================== 自定义字符集处理 ====================
+def parse_custom_charset(input_text: str) -> Tuple[Optional[List[str]], Optional[str]]:
+    """
+    解析用户输入的自定义字符集
+
+    Args:
+        input_text: 用户输入的文本
+
+    Returns:
+        (字符列表, 错误信息) - 成功时错误信息为None
+    """
+    if not input_text or not input_text.strip():
+        return None, "请输入自定义字符集"
+
+    # 使用正则表达式分割（支持空格、逗号(英文)、换行、Tab等分隔符）
+    chars = re.split(r'[\s,\t\n;|]+', input_text.strip())
+
+    # 过滤空字符串
+    chars = [c.strip() for c in chars if c.strip()]
+
+    # 检查最小字符数
+    if len(chars) < MIN_CUSTOM_CHARS:
+        return None, f"自定义字符集至少需要 {MIN_CUSTOM_CHARS} 个字符，当前只有 {len(chars)} 个"
+
+    # 检查最大字符数
+    if len(chars) > MAX_CUSTOM_CHARS:
+        return None, f"自定义字符集最多支持 {MAX_CUSTOM_CHARS} 个字符，当前有 {len(chars)} 个"
+
+    # 检查重复字符
+    unique_chars = list(dict.fromkeys(chars))  # 保持顺序去重
+    if len(unique_chars) < len(chars):
+        duplicates = len(chars) - len(unique_chars)
+        # 显示警告但继续（自动去重）
+        st.warning(f"⚠️ 发现 {duplicates} 个重复字符，已自动去重")
+        chars = unique_chars
+
+    # 检查每个字符长度（建议使用短字符）
+    long_chars = [c for c in chars if len(c) > 3]
+    if long_chars:
+        st.warning(f"⚠️ 检测到 {len(long_chars)} 个长字符（>3字符），可能影响显示效果")
+
+    return chars, None
+
+
+def display_custom_charset_sample(chars: List[str]):
+    """显示自定义字符集预览"""
+    if len(chars) > 20:
+        preview = " ".join(chars[:20]) + f" ... (共{len(chars)}个)"
+    else:
+        preview = " ".join(chars)
+
+    st.info(f"📝 当前字符集: {preview}")
+
+
 # ==================== Streamlit 应用 ====================
 def initialize_session_state():
     """初始化会话状态"""
@@ -96,14 +156,26 @@ def initialize_session_state():
         st.session_state.refresh_counter = 0
     if "last_result" not in st.session_state:
         st.session_state.last_result = []
+    if "custom_charset_input" not in st.session_state:
+        st.session_state.custom_charset_input = ""
+    if "parsed_custom_charset" not in st.session_state:
+        st.session_state.parsed_custom_charset = None
+    if "custom_charset_error" not in st.session_state:
+        st.session_state.custom_charset_error = None
 
 
-def get_charset_config(charset_type: Charset) -> Tuple[List[str], int, int]:
+def get_charset_config(charset_type: Charset, custom_chars: Optional[List[str]] = None) -> Tuple[List[str], int, int]:
     """获取字符集配置"""
     if charset_type == Charset.CHAR:
         return CHAR_LETTER, MIN_LIMIT, MAX_LIMIT_CHAR
-    else:
+    elif charset_type == Charset.NUMBER:
         return ORIGINAL_LETTER, MIN_LIMIT, MAX_LIMIT_NUMBER
+    elif charset_type == Charset.CUSTOM:
+        if custom_chars is None:
+            raise ValueError("自定义字符集未提供")
+        return custom_chars, MIN_LIMIT, len(custom_chars)
+    else:
+        raise ValueError(f"未知的字符集类型: {charset_type}")
 
 
 def safe_copy_to_clipboard(text: str) -> Tuple[bool, str]:
@@ -118,7 +190,6 @@ def safe_copy_to_clipboard(text: str) -> Tuple[bool, str]:
         return True, "✅ 已复制到剪贴板！"
     except Exception as e:
         error_msg = str(e).lower()
-        # 检测常见环境限制
         if "cannot access clipboard" in error_msg or "pyperclip" in error_msg:
             return False, "⚠️ 复制功能受限（云环境限制），请手动复制文本框内容"
         return False, f"⚠️ 复制失败: {str(e)}"
@@ -148,12 +219,77 @@ def main():
             "字符集类型",
             options=[c.value for c in Charset],
             index=0,
-            key="charset_radio"
+            key="charset_radio",
+            help="选择预定义字符集或自定义"
         )
         charset_type = Charset(charset_selection)
 
-        # 获取配置
-        charset_data, min_val, max_val = get_charset_config(charset_type)
+        # 自定义字符集输入（仅在选择自定义时显示）
+        custom_chars = None
+        if charset_type == Charset.CUSTOM:
+            st.markdown("---")
+            st.markdown("### 📝 自定义字符集")
+
+            # 预设示例
+            preset_examples = st.selectbox(
+                "快速选择示例",
+                options=["自定义输入", "中文城市", "带数字的字母"],
+                index=0,
+                help="选择示例可快速填充，也可手动输入"
+            )
+
+            # 示例映射
+            preset_map = {
+                "自定义输入": "",
+                "中文城市": "北京 上海 广州 深圳 杭州 南京 武汉 成都 西安 重庆",
+                "带数字的字母": "A1 B1 C1 D1 E1 F1 G1 H1",
+            }
+
+            # 自动填充示例
+            if preset_examples != "自定义输入" and not st.session_state.custom_charset_input:
+                st.session_state.custom_charset_input = preset_map[preset_examples]
+
+            # 文本输入区域
+            custom_input = st.text_area(
+                "输入自定义字符",
+                value=st.session_state.custom_charset_input,
+                height=150,
+                placeholder="输入字符，用空格、逗号(英文)或换行分隔\n例如：A B C D E",
+                help="支持空格、逗号(英文)、换行、Tab 等分隔符"
+            )
+
+            # 更新会话状态
+            st.session_state.custom_charset_input = custom_input
+
+            # 实时解析按钮
+            if st.button("🔍 解析字符集", use_container_width=True, type="secondary"):
+                parsed_chars, error_msg = parse_custom_charset(custom_input)
+                if error_msg:
+                    st.session_state.custom_charset_error = error_msg
+                    st.session_state.parsed_custom_charset = None
+                    st.error(f"❌ {error_msg}")
+                else:
+                    st.session_state.custom_charset_error = None
+                    st.session_state.parsed_custom_charset = parsed_chars
+                    st.success(f"✅ 成功解析 {len(parsed_chars)} 个字符")
+                    display_custom_charset_sample(parsed_chars)
+
+            # 显示解析结果
+            if st.session_state.parsed_custom_charset:
+                display_custom_charset_sample(st.session_state.parsed_custom_charset)
+            elif st.session_state.custom_charset_error:
+                st.error(f"⚠️ {st.session_state.custom_charset_error}")
+
+            custom_chars = st.session_state.parsed_custom_charset
+
+        st.markdown("---")
+
+        # 获取配置（仅在字符集有效时）
+        try:
+            charset_data, min_val, max_val = get_charset_config(charset_type, custom_chars)
+        except ValueError as e:
+            st.error(f"❌ 字符集配置错误: {str(e)}")
+            st.stop()
 
         # 数量选择
         limit = st.slider(
@@ -173,6 +309,8 @@ def main():
         st.markdown("---")
         st.markdown("**当前配置**")
         st.markdown(f"- 字符集: {charset_type.value}")
+        if charset_type == Charset.CUSTOM and custom_chars:
+            st.markdown(f"- 可用字符: {len(custom_chars)} 个")
         st.markdown(f"- 元素数量: {limit}")
         st.markdown(f"- 序列总数: {((limit - 1) // 2) * 2}")
 
@@ -209,7 +347,7 @@ def main():
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        # 复制按钮 - 恢复原设计思路
+        # 复制按钮
         if st.button("📋 复制所有序列", type="secondary", use_container_width=True):
             success, msg = safe_copy_to_clipboard(result_text)
             if success:
@@ -219,14 +357,15 @@ def main():
                 st.caption("💡 提示：您也可点击文本框右上角📋图标手动复制")
 
     with col2:
-        # 下载按钮（可靠备用方案）
+        # 下载按钮
         buffer = io.BytesIO()
         buffer.write(result_text.encode('utf-8'))
         buffer.seek(0)
+        filename_prefix = "custom" if charset_type == Charset.CUSTOM else charset_type.name.lower()
         st.download_button(
             "📥 下载序列 (.txt)",
             data=buffer,
-            file_name=f"sequences_{limit}elements.txt",
+            file_name=f"sequences_{filename_prefix}_{limit}elements.txt",
             mime="text/plain",
             use_container_width=True
         )
@@ -239,9 +378,9 @@ def main():
     with stats_col2:
         st.metric("元素数量", limit)
     with stats_col3:
-        st.metric("字符集", charset_type.name.split('.')[-1])
+        st.metric("字符集大小", len(charset_data))
 
-    # 页脚说明（无专业术语）
+    # 页脚说明
     st.markdown("---")
     st.markdown(
         """
@@ -252,6 +391,18 @@ def main():
         """,
         unsafe_allow_html=True
     )
+
+    # 自定义字符集使用提示
+    if charset_type == Charset.CUSTOM:
+        st.info(
+            """
+            **💡 自定义字符集提示**
+            - 可以使用中文、英文、emoji等任意字符
+            - 推荐使用短字符（1-3字符）以获得更好的显示效果
+            - 重复字符会自动去重
+            - 支持空格、逗号(英文)、换行等多种分隔符
+            """
+        )
 
 
 if __name__ == "__main__":
